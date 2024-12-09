@@ -1,0 +1,89 @@
+DEVELOPED PYSPARK CODE TO FIND DUPLICATIONS FOR MY PROJECT DATA:-
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+
+duplicate_columns = {
+    "AgencyTransactions" : ["AgencyTransactionID"],
+    "Agents" : ["AgentID"],
+    "CodeTypes" : ["CodeTypeID"],
+    "Codes" : ["CodeID"],
+    "Coverages" : ["CoverageID"],
+    "Custom__ParentAgency" : ["ParentAgencyID"],
+    "MajorCoverages" : ["MajorCoverageID"]
+}
+
+def check_duplicates_status(df, table_name, duplicate_columns):
+    duplicates = df.groupBy(duplicate_columns).count().filter("count > 1")
+    if duplicates.count() > 1:
+        return "Yes"
+    else:
+        return "No"
+
+duplicate_status = []
+for table_name, cols in duplicate_columns.items():
+    for col_name in cols:
+        status = check_duplicates_status(eval(f"df_{table_name}"), table_name, col_name)
+        duplicate_status.append((table_name, col_name, status))
+
+df_duplicate_status = spark.createDataFrame(duplicate_status, ["TableName", "ColumnName", "Duplicates"])
+
+display(df_duplicate_status)
+
+
+
+
+DEVELOPED PYSPARK CODE TO FIND DATA MISMATCH FOR MY PROJECT DATA:-
+
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+
+def compare_tables(table_pairs):
+    spark = SparkSession.builder.getOrCreate()
+
+    for main_table, raw_table, identifier in table_pairs:
+        main_table_columns = set(spark.table(main_table).columns)
+        raw_table_columns = set(spark.table(raw_table).columns)
+
+        if identifier in main_table_columns and identifier in raw_table_columns:
+            columns = [col for col in main_table_columns if col != identifier and col in raw_table_columns]
+
+            detailed_comparison_query = """SELECT a.{identifier}, {columns}
+            FROM {main_table} a JOIN {raw_table} r ON a.{identifier} = r.{identifier}""".format(
+                identifier=identifier, main_table=main_table, raw_table=raw_table,
+                columns=", ".join([
+                    f"a.{col} as {col}_{main_table}, r.{col} as {col}_{raw_table}, "
+                    f"CASE WHEN a.{col} = r.{col} THEN 'True' ELSE 'False' END AS {col}_match"
+ for col in columns
+                ])
+            )
+            detailed_comparison_df = spark.sql(detailed_comparison_query)
+
+            cols_to_drop = []
+            for col_name in detailed_comparison_df.columns:
+                if col_name.endswith('_match'):
+                    all_true = detailed_comparison_df.select(col_name).distinct().collect()
+                    if len(all_true) == 1 and all_true[0][0] == 'True':
+                        base_col = col_name.replace('_match', '')
+                        cols_to_drop.extend([base_col + f'_{main_table}', base_col + f'_{raw_table}', col_name])
+
+            detailed_comparison_df = detailed_comparison_df.drop(*cols_to_drop)
+            display(detailed_comparison_df)
+
+        else:
+            print(f"{identifier} column is missing in one of the dataframes for {main_table} and {raw_table}.")
+
+table_pairs = [
+   ('AgencyTransactions', 'AgencyTransactionsRaw', 'AgencyTransactionID'),
+    ('Brokers', 'BrokersRaw', 'BrokerID'),
+    ('Agents', 'AgentsRaw', 'AgentID'),
+    ('Carriers','CarriersRaw','CarrierID'),
+    ('Clients','ClientsRaw','ClientID'),
+    ('CodeTypes','CodeTypesRaw','CodeTypeID'),
+    ('Codes','CodesRaw','CodeID'),
+]
+
+compare_tables(table_pairs) 
+
+
